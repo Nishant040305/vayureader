@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "VayuReader",
+    "name": "VayuReader2.0",
     "slug": "VayuReader",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -20,7 +20,9 @@
       "usesCleartextTraffic": true,
       "package": "com.vayureader",
       "permissions": [
-        "INTERNET"
+        "INTERNET",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
       ],
       "minSdkVersion": 26
     },

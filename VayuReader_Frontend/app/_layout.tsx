@@ -10,6 +10,9 @@ export default function RootLayout() {
         <Stack.Screen name="auth/login" options={{ headerShown: false }} />
         <Stack.Screen name="auth/otp" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="pdfread/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="word/[word]" options={{ headerShown: false }} />
+        <Stack.Screen name="offline" options={{ headerShown: false }} />
       </Stack>
     </AuthProvider>
   );

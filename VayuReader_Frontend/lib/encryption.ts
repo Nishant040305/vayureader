@@ -217,7 +217,7 @@ export async function decrypt(enc64: string, keyBytes: Uint8Array): Promise<stri
 
     const ciphertext = ct.slice(0, ct.length - TAG_LENGTH);
     const tag = ct.slice(ct.length - TAG_LENGTH);
-    return decode(aesGcmDec(keyBytes, iv, ciphertext, tag).buffer);
+    return decode(aesGcmDec(keyBytes, iv, ciphertext, tag).buffer as ArrayBuffer);
 }
 
 // =============================================================================

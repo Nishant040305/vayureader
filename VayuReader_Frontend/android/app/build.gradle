@@ -98,8 +98,8 @@ android {
         applicationId 'com.vayureader'       
         minSdkVersion 26
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"                    
+        versionCode 2
+        versionName "2.0"                    
     }
 
     signingConfigs {
@@ -162,6 +162,9 @@ android {
             if (abi != null) {  // null for the universal-debug, universal-release variants
                 output.versionCodeOverride =
                         defaultConfig.versionCode * 1000 + versionCodes.get(abi)
+                output.outputFileName = "VayuReader2.0-${variant.name}-${abi}.apk"
+            } else {
+                output.outputFileName = "VayuReader2.0-${variant.name}.apk"
             }
         }
     }

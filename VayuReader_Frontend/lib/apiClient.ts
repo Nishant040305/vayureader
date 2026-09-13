@@ -3,12 +3,15 @@ import { router } from 'expo-router';
 import { Alert } from 'react-native';
 
 import { clearToken, getToken } from './authStorage';
+import { getDeviceId } from './deviceId';
 import {
   getSessionKey,
   encrypt,
   decrypt,
   clearKeyCache,
 } from './encryption';
+
+let cachedDeviceId: string | null = null;
 
 type UnauthorizedHandler = () => Promise<void> | void;
 
@@ -87,11 +90,18 @@ apiClient.interceptors.request.use(async (config) => {
   if (!isAuthFlow) {
     token = await getToken();
     if (token) {
-      config.headers = {
-        ...config.headers,
-        Authorization: `Bearer ${token}`,
-      };
+      (config.headers as any).Authorization = `Bearer ${token}`;
     }
+  }
+
+  // Attach Device ID header
+  if (!cachedDeviceId) {
+    try {
+      cachedDeviceId = await getDeviceId();
+    } catch {}
+  }
+  if (cachedDeviceId) {
+    (config.headers as any)['x-device-id'] = cachedDeviceId;
   }
 
   // --- E2EE: Encrypt request body → text/plain ---
@@ -104,7 +114,7 @@ apiClient.interceptors.request.use(async (config) => {
         const key = getSessionKey(token);
         if (key) {
           config.data = await encrypt(config.data, key);
-          config.headers = { ...config.headers, 'Content-Type': 'text/plain' };
+          (config.headers as any)['Content-Type'] = 'text/plain';
         }
       } catch (err) {
         console.error('[E2EE] Request encryption failed:', err);
@@ -142,6 +152,7 @@ apiClient.interceptors.response.use(
     return response;
   },
   async (error) => {
+
     // Try to decrypt encrypted error responses
     const errorContentType = error?.response?.headers?.['content-type'] || '';
     if (errorContentType.includes('text/plain') && error?.response && typeof error.response.data === 'string' && error.response.data.length > 0) {

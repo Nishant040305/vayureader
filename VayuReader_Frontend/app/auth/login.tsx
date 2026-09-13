@@ -18,6 +18,8 @@ import { icons } from '@/constants/icons';
 import { images } from '@/constants/images';
 import { AUTH_BASE_URL } from '@/constants/config';
 import apiClient from '@/lib/apiClient';
+import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 
 const LoginScreen = () => {
   const router = useRouter();
@@ -129,6 +131,26 @@ const LoginScreen = () => {
               >
                 <Text className="text-center text-white text-lg font-bold">
                   {loading ? 'Sending...' : 'Login'}
+                </Text>
+              </TouchableOpacity>
+
+              <View className="flex-row items-center my-3">
+                <View className="flex-1 h-px bg-gray-800" />
+                <Text className="text-gray-500 text-xs px-3 font-semibold uppercase">or</Text>
+                <View className="flex-1 h-px bg-gray-800" />
+              </View>
+
+              <TouchableOpacity
+                className="flex-row items-center justify-center bg-[#131124] rounded-2xl py-3.5 border border-[#3b3560]"
+                activeOpacity={0.8}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  router.push('/offline');
+                }}
+              >
+                <Ionicons name="folder-open-outline" size={20} color="#5B5FEF" style={{ marginRight: 8 }} />
+                <Text className="text-white text-base font-bold">
+                  View Offline Files
                 </Text>
               </TouchableOpacity>
             </View>
