@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import { PDF_BASE_URL } from '@/constants/config';
 import { getToken } from './authStorage';
+import { clearCachedPdfThumbnail, generatePdfThumbnail } from './pdfThumbnail';
 
 const FS = ReactNativeBlobUtil.fs;
 
@@ -103,21 +104,23 @@ export const getFullPdfUrl = (base: string, path: any): string => {
 };
 
 /**
- * Finds local thumbnail path for a document id or filename
+ * Removes old persisted thumbnail images. Thumbnails are generated into cache at runtime only.
  */
-export const findLocalThumbnail = async (id: string, nameWithoutExt?: string): Promise<string | null> => {
+const cleanupPersistedThumbnailImages = async (id?: string, nameWithoutExt?: string): Promise<void> => {
   try {
     const cleanId = String(id || '').replace(/[^\w-]/g, '_');
     const thumbDir = `${FS.dirs.DocumentDir}/thumbnails`;
     const publicDir = getVayuDownloadDir();
 
-    const candidates: string[] = [
-      `${thumbDir}/${cleanId}.jpg`,
-      `${thumbDir}/${cleanId}.png`,
-      `${thumbDir}/${cleanId}.jpeg`,
-      `${thumbDir}/${cleanId}_thumb.jpg`,
-      `${thumbDir}/${cleanId}_thumb.png`,
-    ];
+    const candidates: string[] = cleanId
+      ? [
+          `${thumbDir}/${cleanId}.jpg`,
+          `${thumbDir}/${cleanId}.png`,
+          `${thumbDir}/${cleanId}.jpeg`,
+          `${thumbDir}/${cleanId}_thumb.jpg`,
+          `${thumbDir}/${cleanId}_thumb.png`,
+        ]
+      : [];
 
     if (nameWithoutExt) {
       candidates.push(
@@ -133,43 +136,68 @@ export const findLocalThumbnail = async (id: string, nameWithoutExt?: string): P
 
     for (const c of candidates) {
       if (await FS.exists(c)) {
-        return c;
+        try { await FS.unlink(c); } catch {}
       }
     }
   } catch {}
-  return null;
 };
 
 /**
- * Cleans up old internal/update folders and migrates files to the public downloads/vayureader folder
+ * Generates an in-memory thumbnail for a local PDF without saving to disk.
+ * Returns a Base64 data URI (data:image/jpeg;base64,...).
+ */
+export const ensurePdfThumbnail = async (
+  pdfPath: string,
+  id?: string,
+  nameWithoutExt?: string
+): Promise<string | null> => {
+  try {
+    if (id || nameWithoutExt) {
+      await cleanupPersistedThumbnailImages(id, nameWithoutExt);
+    }
+    const cleanPath = pdfPath.startsWith('file://') ? pdfPath.slice(7) : pdfPath;
+    return await generatePdfThumbnail(cleanPath, 0);
+  } catch (err) {
+    console.log('[PDF Storage] Non-fatal thumbnail generation failure:', err);
+    return null;
+  }
+};
+
+/**
+ * Cleans up old internal/update folders and migrates files to the public downloads/vayureader folder.
+ * Ensures only PDFs are kept in the public downloads directory.
  */
 export const cleanupOldUpdateFolders = async (): Promise<void> => {
   try {
     const publicDir = getVayuDownloadDir();
     const oldInternalDir = `${FS.dirs.DocumentDir}/vayureader`;
+    const thumbDir = `${FS.dirs.DocumentDir}/thumbnails`;
 
     if (await FS.exists(oldInternalDir)) {
       const files = await FS.ls(oldInternalDir);
       for (const file of files) {
-        if (file.toLowerCase().endsWith('.pdf') || file.toLowerCase().endsWith('.jpg') || file.toLowerCase().endsWith('.png')) {
-          const oldFilePath = `${oldInternalDir}/${file}`;
+        const isPdf = file.toLowerCase().endsWith('.pdf');
+        const isImg =
+          file.toLowerCase().endsWith('.jpg') ||
+          file.toLowerCase().endsWith('.png') ||
+          file.toLowerCase().endsWith('.jpeg');
+        const oldFilePath = `${oldInternalDir}/${file}`;
+
+        if (isPdf) {
           const newFilePath = `${publicDir}/${file}`;
           try {
             if (!(await FS.exists(newFilePath))) {
-              try {
-                if (!(await FS.exists(publicDir))) {
-                  await FS.mkdir(publicDir);
-                }
-                await FS.cp(oldFilePath, newFilePath);
-                if (Platform.OS === 'android') {
-                  const mime = file.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
-                  await FS.scanFile([{ path: newFilePath, mime }]);
-                }
-              } catch {}
+              if (!(await FS.exists(publicDir))) {
+                await FS.mkdir(publicDir);
+              }
+              await FS.cp(oldFilePath, newFilePath);
+              if (Platform.OS === 'android') {
+                await FS.scanFile([{ path: newFilePath, mime: 'application/pdf' }]);
+              }
             }
           } catch {}
-          try { await FS.unlink(oldFilePath); } catch {}
         }
+        try { await FS.unlink(oldFilePath); } catch {}
       }
       try { await FS.unlink(oldInternalDir); } catch {}
     }
@@ -179,43 +207,91 @@ export const cleanupOldUpdateFolders = async (): Promise<void> => {
     if (oldAppExtDir !== publicDir && (await FS.exists(oldAppExtDir))) {
       const files = await FS.ls(oldAppExtDir);
       for (const file of files) {
-        if (file.toLowerCase().endsWith('.pdf') || file.toLowerCase().endsWith('.jpg') || file.toLowerCase().endsWith('.png')) {
-          const oldFilePath = `${oldAppExtDir}/${file}`;
+        const isPdf = file.toLowerCase().endsWith('.pdf');
+        const isImg =
+          file.toLowerCase().endsWith('.jpg') ||
+          file.toLowerCase().endsWith('.png') ||
+          file.toLowerCase().endsWith('.jpeg');
+        const oldFilePath = `${oldAppExtDir}/${file}`;
+
+        if (isPdf) {
           const newFilePath = `${publicDir}/${file}`;
           try {
             if (!(await FS.exists(newFilePath))) {
-              try {
-                if (!(await FS.exists(publicDir))) {
-                  await FS.mkdir(publicDir);
-                }
-                await FS.cp(oldFilePath, newFilePath);
-                if (Platform.OS === 'android') {
-                  const mime = file.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
-                  await FS.scanFile([{ path: newFilePath, mime }]);
-                }
-              } catch {}
+              if (!(await FS.exists(publicDir))) {
+                await FS.mkdir(publicDir);
+              }
+              await FS.cp(oldFilePath, newFilePath);
+              if (Platform.OS === 'android') {
+                await FS.scanFile([{ path: newFilePath, mime: 'application/pdf' }]);
+              }
             }
           } catch {}
-          try { await FS.unlink(oldFilePath); } catch {}
         }
+        try { await FS.unlink(oldFilePath); } catch {}
       }
       try { await FS.unlink(oldAppExtDir); } catch {}
     }
+
+    // Clean up any stray thumbnail images from the public download folder so only PDFs reside there
+    if (await FS.exists(publicDir)) {
+      try {
+        const publicFiles = await FS.ls(publicDir);
+        for (const file of publicFiles) {
+          if (
+            file.toLowerCase().endsWith('.jpg') ||
+            file.toLowerCase().endsWith('.png') ||
+            file.toLowerCase().endsWith('.jpeg')
+          ) {
+            const imgPath = `${publicDir}/${file}`;
+            try {
+              await FS.unlink(imgPath);
+            } catch {}
+          }
+        }
+      } catch {}
+    }
+
+    if (await FS.exists(thumbDir)) {
+      try {
+        const thumbFiles = await FS.ls(thumbDir);
+        for (const file of thumbFiles) {
+          if (
+            file.toLowerCase().endsWith('.jpg') ||
+            file.toLowerCase().endsWith('.png') ||
+            file.toLowerCase().endsWith('.jpeg')
+          ) {
+            try { await FS.unlink(`${thumbDir}/${file}`); } catch {}
+          }
+        }
+      } catch {}
+    }
+
+    // Clean up any stray temporary thumbnail files in CacheDir
+    try {
+      if (await FS.exists(FS.dirs.CacheDir)) {
+        const cacheFiles = await FS.ls(FS.dirs.CacheDir);
+        for (const file of cacheFiles) {
+          if (file.startsWith('pdf_thumb_') && file.endsWith('.jpg')) {
+            try { await FS.unlink(`${FS.dirs.CacheDir}/${file}`); } catch {}
+          }
+        }
+      }
+    } catch {}
   } catch (err) {
     console.log('[PDF Storage] Non-fatal cleanup notice:', err);
   }
 };
 
 /**
- * Downloads a PDF (and its cover thumbnail image) and stores them in downloads/vayureader
+ * Downloads a PDF and stores it in downloads/vayureader.
+ * Cover thumbnails are generated into cache at runtime and are not persisted.
  */
 export const downloadPdfFile = async (
   pdf: DownloadPdfParams,
   onProgress?: (percent: number) => void
 ): Promise<{ path: string; fileName: string; thumbnailPath?: string }> => {
   const fileName = getSafePdfFileName(pdf.title, pdf._id);
-  const cleanId = String(pdf._id || '').replace(/[^\w-]/g, '_');
-  const cleanTitle = (pdf.title || 'document').trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '_');
   const publicDir = getVayuDownloadDir();
   const targetPath = `${publicDir}/${fileName}`;
 
@@ -329,51 +405,7 @@ export const downloadPdfFile = async (
     }
   } catch {}
 
-  // 4. Download and store cover thumbnail image for rich offline view mechanics
-  let localThumbPath: string | undefined;
-  if (pdf.thumbnail) {
-    try {
-      const thumbDir = `${FS.dirs.DocumentDir}/thumbnails`;
-      if (!(await FS.exists(thumbDir))) {
-        await FS.mkdir(thumbDir);
-      }
-      const isPng = pdf.thumbnail.toLowerCase().includes('.png');
-      const thumbExt = isPng ? 'png' : 'jpg';
-      const thumbFileName = `${cleanTitle}_${cleanId}_thumb.${thumbExt}`;
-      const thumbDest = `${thumbDir}/${cleanId}.${thumbExt}`;
-
-      const thumbUrl = getFullPdfUrl(PDF_BASE_URL, pdf.thumbnail);
-      if (thumbUrl) {
-        const thumbTask = ReactNativeBlobUtil.config({
-          path: thumbDest,
-          overwrite: true,
-        }).fetch('GET', thumbUrl, headers);
-
-        const thumbRes = await thumbTask;
-        if (thumbRes.info().status >= 200 && thumbRes.info().status < 300) {
-          localThumbPath = thumbDest;
-
-          // Also place a copy in downloads/vayureader so user has the cover image in Downloads
-          try {
-            const publicThumbPath = `${publicDir}/${thumbFileName}`;
-            if (await FS.exists(publicDir)) {
-              if (await FS.exists(publicThumbPath)) {
-                try { await FS.unlink(publicThumbPath); } catch {}
-              }
-              await FS.cp(thumbDest, publicThumbPath);
-              if (Platform.OS === 'android') {
-                await FS.scanFile([{ path: publicThumbPath, mime: `image/${thumbExt}` }]);
-              }
-            }
-          } catch {}
-        }
-      }
-    } catch (tErr) {
-      console.log('[PDF Storage] Thumbnail download non-fatal error:', tErr);
-    }
-  }
-
-  // Save to persistent registry
+  // Save to persistent registry (without storing any thumbnail)
   try {
     const registry = await getDownloadsRegistry();
     const updated = registry.filter(item => item.id !== pdf._id && item.fileName !== fileName);
@@ -384,7 +416,6 @@ export const downloadPdfFile = async (
       filePath: finalPath,
       size: fileSize,
       lastModified: Date.now(),
-      thumbnailPath: localThumbPath,
       category: pdf.category,
     });
     await saveDownloadsRegistry(updated);
@@ -392,7 +423,7 @@ export const downloadPdfFile = async (
     console.warn('[PDF Storage] Failed to update registry:', regErr);
   }
 
-  return { path: finalPath, fileName, thumbnailPath: localThumbPath };
+  return { path: finalPath, fileName };
 };
 
 /**
@@ -425,11 +456,7 @@ export const findDownloadedPdfById = async (id: string): Promise<{ path: string;
     );
     if (regItem) {
       if (regItem.filePath.startsWith('content://') || (await FS.exists(regItem.filePath))) {
-        let thumb = regItem.thumbnailPath;
-        if (!thumb || !(await FS.exists(thumb))) {
-          thumb = (await findLocalThumbnail(id, regItem.fileName.replace(/\.pdf$/i, ''))) || undefined;
-        }
-        return { path: regItem.filePath, fileName: regItem.fileName, thumbnailPath: thumb };
+        return { path: regItem.filePath, fileName: regItem.fileName };
       }
     }
 
@@ -441,8 +468,7 @@ export const findDownloadedPdfById = async (id: string): Promise<{ path: string;
       if (match) {
         const fullPath = `${dir}/${match}`;
         if (await FS.exists(fullPath)) {
-          const thumb = await findLocalThumbnail(id, match.replace(/\.pdf$/i, ''));
-          return { path: fullPath, fileName: match, thumbnailPath: thumb || undefined };
+          return { path: fullPath, fileName: match };
         }
       }
     }
@@ -455,8 +481,7 @@ export const findDownloadedPdfById = async (id: string): Promise<{ path: string;
       if (match) {
         const fullPath = `${intDir}/${match}`;
         if (await FS.exists(fullPath)) {
-          const thumb = await findLocalThumbnail(id, match.replace(/\.pdf$/i, ''));
-          return { path: fullPath, fileName: match, thumbnailPath: thumb || undefined };
+          return { path: fullPath, fileName: match };
         }
       }
     }
@@ -467,7 +492,8 @@ export const findDownloadedPdfById = async (id: string): Promise<{ path: string;
 };
 
 /**
- * Lists all PDF files stored in downloads/vayureader with their cover images
+ * Lists all PDF files stored in downloads/vayureader.
+ * Thumbnails are rendered on the fly in the offline viewer and are not stored.
  */
 export const getDownloadedPdfList = async (): Promise<LocalPdfItem[]> => {
   try {
@@ -502,8 +528,6 @@ export const getDownloadedPdfList = async (): Promise<LocalPdfItem[]> => {
             lastModified = Number(stat.lastModified);
           } catch {}
 
-          const thumbPath = await findLocalThumbnail(id, nameWithoutExt);
-
           itemsMap.set(fileName, {
             fileName,
             filePath,
@@ -511,7 +535,6 @@ export const getDownloadedPdfList = async (): Promise<LocalPdfItem[]> => {
             id,
             size,
             lastModified: lastModified || Date.now(),
-            thumbnailPath: thumbPath || undefined,
           });
         }
       } catch (lsErr) {
@@ -527,19 +550,15 @@ export const getDownloadedPdfList = async (): Promise<LocalPdfItem[]> => {
       const exists =
         regItem.filePath.startsWith('content://') || (await FS.exists(regItem.filePath));
       if (exists) {
-        let thumb = regItem.thumbnailPath;
-        if (!thumb || !(await FS.exists(thumb))) {
-          thumb = (await findLocalThumbnail(regItem.id, regItem.fileName.replace(/\.pdf$/i, ''))) || undefined;
-        }
-
-        verifiedRegistry.push({ ...regItem, thumbnailPath: thumb });
+        // Strip legacy thumbnailPath from persisted registry
+        const { thumbnailPath: _, ...cleanRegItem } = regItem;
+        verifiedRegistry.push(cleanRegItem);
         const existing = itemsMap.get(regItem.fileName);
         itemsMap.set(regItem.fileName, {
-          ...regItem,
+          ...cleanRegItem,
           title: regItem.title || existing?.title || regItem.fileName,
           size: regItem.size || existing?.size,
           lastModified: regItem.lastModified || existing?.lastModified,
-          thumbnailPath: thumb || existing?.thumbnailPath,
           category: regItem.category || existing?.category,
         });
       }
@@ -559,7 +578,7 @@ export const getDownloadedPdfList = async (): Promise<LocalPdfItem[]> => {
 };
 
 /**
- * Deletes a downloaded PDF file (and its local cover thumbnail image) from downloads/vayureader
+ * Deletes a downloaded PDF file from downloads/vayureader
  */
 export const deleteDownloadedFile = async (filePath: string): Promise<boolean> => {
   try {
@@ -569,16 +588,18 @@ export const deleteDownloadedFile = async (filePath: string): Promise<boolean> =
       deleted = true;
     }
 
-    // Remove associated thumbnail file
+    // Clear runtime in-memory thumbnail cache
+    try {
+      clearCachedPdfThumbnail(filePath);
+    } catch {}
+
+    // Remove legacy thumbnail files if any existed previously
     try {
       const fileName = filePath.split('/').pop() || '';
       const nameWithoutExt = fileName.replace(/\.pdf$/i, '');
       const lastUnderscore = nameWithoutExt.lastIndexOf('_');
       const id = lastUnderscore > 0 ? nameWithoutExt.substring(lastUnderscore + 1) : '';
-      const thumb = await findLocalThumbnail(id, nameWithoutExt);
-      if (thumb && (await FS.exists(thumb))) {
-        await FS.unlink(thumb);
-      }
+      await cleanupPersistedThumbnailImages(id, nameWithoutExt);
     } catch {}
 
     // Remove from registry

@@ -22,6 +22,10 @@ import {
   getDownloadedPdfList,
   LocalPdfItem,
 } from '@/lib/pdfStorage';
+import {
+  generatePdfThumbnail,
+  getCachedPdfThumbnail,
+} from '@/lib/pdfThumbnail';
 
 type ViewMode = 'grid' | 'list';
 
@@ -63,7 +67,6 @@ export default function OfflineScreen() {
         id: item.id,
         filePath: item.filePath,
         title: item.title,
-        ...(item.thumbnailPath ? { thumbnailPath: item.thumbnailPath } : {}),
       },
     });
   };
@@ -137,38 +140,60 @@ export default function OfflineScreen() {
     setViewMode(prev => (prev === 'grid' ? 'list' : 'grid'));
   };
 
-  // Render Thumbnail Helper
-  const renderCoverImage = (item: LocalPdfItem, isGrid: boolean) => {
-    const hasThumb = Boolean(item.thumbnailPath);
-    const imageUri = item.thumbnailPath
-      ? item.thumbnailPath.startsWith('file://')
-        ? item.thumbnailPath
-        : `file://${item.thumbnailPath}`
-      : null;
-
-    if (hasThumb && imageUri) {
-      return (
-        <Image
-          source={{ uri: imageUri }}
-          style={isGrid ? styles.gridCoverImage : styles.listCoverImage}
-          resizeMode="cover"
-        />
+  // In-Memory Render-On-Demand Cover Thumbnail (Never Saved to Disk)
+  const OfflineCoverThumbnail = React.useCallback(
+    ({
+      filePath,
+      title,
+      isGrid,
+    }: {
+      filePath: string;
+      title: string;
+      isGrid: boolean;
+    }) => {
+      const [thumbUri, setThumbUri] = useState<string | null>(() =>
+        getCachedPdfThumbnail(filePath)
       );
-    }
 
-    return (
-      <View style={isGrid ? styles.gridPlaceholder : styles.listPlaceholder}>
-        <View style={styles.placeholderIconCircle}>
-          <Ionicons name="document-text" size={isGrid ? 28 : 22} color="#EF4444" />
+      useEffect(() => {
+        let isMounted = true;
+        if (!thumbUri && filePath) {
+          generatePdfThumbnail(filePath).then(uri => {
+            if (isMounted && uri) {
+              setThumbUri(uri);
+            }
+          });
+        }
+        return () => {
+          isMounted = false;
+        };
+      }, [filePath, thumbUri]);
+
+      if (thumbUri) {
+        return (
+          <Image
+            source={{ uri: thumbUri }}
+            style={isGrid ? styles.gridCoverImage : styles.listCoverImage}
+            resizeMode="cover"
+          />
+        );
+      }
+
+      return (
+        <View style={isGrid ? styles.gridPlaceholder : styles.listPlaceholder}>
+          <View style={styles.placeholderIconCircle}>
+            <Ionicons name="document-text" size={isGrid ? 28 : 22} color="#EF4444" />
+          </View>
+          {isGrid && (
+            <Text style={styles.placeholderText} numberOfLines={2}>
+              {title}
+            </Text>
+          )}
         </View>
-        {isGrid && (
-          <Text style={styles.placeholderText} numberOfLines={2}>
-            {item.title}
-          </Text>
-        )}
-      </View>
-    );
-  };
+      );
+    },
+    []
+  );
 
   // Grid Card
   const renderGridItem = ({ item }: { item: LocalPdfItem }) => (
@@ -178,7 +203,7 @@ export default function OfflineScreen() {
       activeOpacity={0.78}
     >
       <View style={styles.gridCoverWrapper}>
-        {renderCoverImage(item, true)}
+        <OfflineCoverThumbnail filePath={item.filePath} title={item.title} isGrid={true} />
 
         {/* Category Floating Badge */}
         {item.category ? (
@@ -222,7 +247,7 @@ export default function OfflineScreen() {
       activeOpacity={0.75}
     >
       <View style={styles.listCoverWrapper}>
-        {renderCoverImage(item, false)}
+        <OfflineCoverThumbnail filePath={item.filePath} title={item.title} isGrid={false} />
       </View>
 
       <View style={styles.listTextContainer}>
@@ -385,7 +410,7 @@ export default function OfflineScreen() {
             <Text style={styles.emptyMessage}>
               {searchText || selectedCategory !== 'All'
                 ? 'Try a different filter or search term.'
-                : 'PDFs and their cover images you download will appear here with rich cover previews, readable anytime without internet or login.'}
+                : 'PDFs you download will appear here with rich cover previews generated directly from the document, readable anytime without internet or login.'}
             </Text>
             {!searchText && selectedCategory === 'All' && (
               <TouchableOpacity
